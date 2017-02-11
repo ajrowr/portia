@@ -1,6 +1,24 @@
 
-import sys
+import sys, tempfile
 import tractor
+
+class util(object):
+    @staticmethod
+    def with_temp_file(fn):
+        outfname = ''
+        with tempfile.NamedTemporaryFile(prefix=outprefix, delete=False) as outf:
+            fn(outf)
+            # extractor.download_csv_to(outf)
+            outfname = outf.name
+        return outfname
+
+    @staticmethod
+    def save_csv(extractor):
+        def write_out(fout):
+            extractor.download_csv_to(fout)
+        return util.with_temp_file(write_out)    
+
+    
 
 class ProcessHandler(object):
     """
@@ -8,12 +26,17 @@ class ProcessHandler(object):
     - recognize whether current status stage has ended
     - if it has, perform necessary intra-stage tasks and begin next stage
     - return either None or updated status info (updated list of stages)
-    - each stage can be in various states. STARTED and FINISHED are standard, others are internal to the handler
+    - each stage can be in various states. STARTED and FINISHED are standard, others are internal to the handler subclass
     """
     
     # stages_list = ['stage1_get_list', 'stage2_get_locationcookie', 'stage3_get_stores']
     # extractor_tags = ['extractor_list', 'extractor_locationcookie', 'extractor_stores']
     # stages_list = ['stage1_get_list', 'stage3_get_stores']
+    
+    extractor_tags = [] ## These refer to extractors named in the config file / extractors dict
+    stage_sequence = [] ## The names of inner ProcessStage subclasses representing process steps, in execution order
+    
+    ## Leave blank
     extractors = {}
     
     def __init__(self, extractors):
@@ -53,7 +76,7 @@ class ProcessHandler(object):
                     mystage.update(poststage_status)
                         
                 elif new_status == 'STARTED':
-                    sys.stderr.write("EXTRACTOR is running")
+                    # sys.stderr.write("EXTRACTOR is running")
                     duringstage_status = stageobj.during(*[], **{})
                     mystage.update(duringstage_status)
 
@@ -63,7 +86,8 @@ class ProcessHandler(object):
                     mystage.update(duringstage_status)
                 
                 else:
-                    sys.stderr.write("EXTRACTOR STAGE IS '{}'".format(new_status))
+                    pass
+                    # sys.stderr.write("EXTRACTOR STAGE IS '{}'".format(new_status))
             
 
             # ## Not an extractor-based stage
@@ -97,7 +121,8 @@ class ProcessHandler(object):
                 newstage_obj = newstage_class(extractors=self.extractors)
                 stageinfo.append(newstage_obj.begin(previous_stage=prevstage, *[], **{}))
             else:
-                sys.stderr.write('PROCESS CONCLUDED\n')
+                pass
+                # sys.stderr.write('PROCESS CONCLUDED\n')
                 
         return stageinfo
 
@@ -108,6 +133,9 @@ class ProcessStage(object):
     """
     extractor_tag = None
     extractor = None
+    message_begin = ''
+    message_during = ''
+    message_finish = ''
     
     def __init__(self, extractors={}):
         if self.extractor_tag:
@@ -121,7 +149,7 @@ class ProcessStage(object):
         if self.extractor:
             run = self.runs_get_latest()
             f = lambda k, d=None: run['fields'].get(k, d)
-            return dict(
+            d = dict(
                 count_total = int(f('totalUrlCount', 0)),
                 count_done = int(f('successUrlCount', 0)) + int(f('failedUrlCount', 0)),
                 when_started = int(f('startedAt', 0)),
@@ -129,6 +157,9 @@ class ProcessStage(object):
                 extractor_state = f('state'),
                 status = f('state')
             )
+            if d['count_total'] and d['count_done']:
+                d['progress_fraction'] = float(d['count_done']) / float(d['count_total'])
+            return d
         else:
             return dict(
                 
@@ -147,13 +178,74 @@ class ProcessStage(object):
         # except:
         #     pass
         
-        
     
-    def begin(self, *args, **kwargs):
-        return dict()
+    def prep(self, previous_stage={}, *args, **kwargs):
+        """Perform any necessary preparatory tasks so that the stage can run.
+        This helps us keep begin() clean where possible."""
+        return True
+    
+    def begin(self, previous_stage={}, *args, **kwargs):
+        return dict(
+            # stage_class = self.__class__.__name__,
+            # extractor_tag = self.extractor_tag,
+            # status_message = "XYZZY extraction running",
+            # progress_fraction = 0.0,
+            # status = 'STARTED'
+        )
     
     def during(self, *args, **kwargs):
         return dict()
     
     def finish(self, *args, **kwargs):
-        return dict()
+        return dict(
+            # status_ok = True,
+            # status_message = "Store list extracted",
+            # status = 'FINISHED',
+            # output_written_to = <OUTFNAME>
+        )
+    
+
+class ExtractorProcessStage(ProcessStage):
+    """Runs the extractor identified by extractor_tag (or any extractor in self.extractor), then saves the CSV output to a tempfile
+    """
+    
+    extractor_tag = None
+    message_begin = "Extractor starting"
+    message_during = "Extractor running"
+    message_finish = "Extractor finished"
+    
+    def begin(self, previous_stage={}, *args, **kwargs):
+        if not self.prep(previous_stage, *args, **kwargs):
+            raise("Unable to prep extractor")
+        if not self.extractor:
+            raise("No extractor provided for extractor stage")
+        # sys.stderr.write('STAGE I STARTING\n')
+        self.extractor.start()
+        return dict(
+            #stage_ident = self.__class__.__name__,
+            stage_class = self.__class__.__name__,
+            extractor_tag = self.extractor_tag,
+            status_message = self.message_begin,
+            progress_fraction = 0.0,
+            status = 'STARTED'
+        )
+
+    def during(self, *args, **kwargs):
+        # sys.stderr.write('PROCESS RUNNING\n')
+        return dict(
+            status_message = self.message_during
+        )
+
+    def finish(self, *args, **kwargs):
+        ## Get URLs from list extractor and inject them into store extractor
+        ## (later we will incorporate the location cookie)
+        outfname = util.save_csv(self.extractor)
+        
+        # sys.stderr.write('POST STAGE I EXECUTED\n')
+        return dict(
+            status_ok = True,
+            status_message = self.message_finish,
+            status = 'FINISHED',
+            output_written_to = outfname
+        )
+            
