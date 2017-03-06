@@ -1,5 +1,5 @@
 
-import sys, tempfile
+import sys, tempfile, datetime, time, csv, json
 import tractor
 
 class util(object):
@@ -18,6 +18,32 @@ class util(object):
             extractor.download_csv_to(fout)
         return util.with_temp_file(write_out)    
 
+    @staticmethod
+    def timestamp_now():
+        return 1000*int(time.mktime(datetime.datetime.now().timetuple()))
+    
+    @staticmethod
+    def url_put_rider(u, dat):
+        from urlparse import parse_qsl, urlparse, urlunparse
+        from urllib import urlencode
+        parsed = list(urlparse(u))
+        qdict = dict(parse_qsl(parsed[4]) + [('_RIDER', json.dumps(dat))])
+        parsed[4] = urlencode(qdict)
+        return urlunparse(parsed)
+    
+    @staticmethod
+    def url_get_rider(u):
+        from urlparse import parse_qsl, urlparse, urlunparse
+        try:
+            return json.loads(dict(parse_qsl(urlparse(u).query)).get('_RIDER', '{}'))
+        except:
+            import sys
+            sys.stderr.write(u + '\n')
+            raise
+    
+    @staticmethod
+    def log(message, level=0):
+        sys.stderr.write(message + '\n')
     
 
 class ProcessHandler(object):
@@ -33,7 +59,7 @@ class ProcessHandler(object):
     # extractor_tags = ['extractor_list', 'extractor_locationcookie', 'extractor_stores']
     # stages_list = ['stage1_get_list', 'stage3_get_stores']
     
-    extractor_tags = [] ## These refer to extractors named in the config file / extractors dict
+    # extractor_tags = [] ## These refer to extractors named in the config file / extractors dict
     stage_sequence = [] ## The names of inner ProcessStage subclasses representing process steps, in execution order
     
     ## Leave blank
@@ -54,7 +80,24 @@ class ProcessHandler(object):
         FINISHED and COMPLETE as different statuses?
         STARTED for extractors and PROCESSING for other things
         """
+        
+        """
+        Stage transitions:
+        When a stage's work is done it returns a status of "FINISHED" from status()
+        Then, the handler will call its .finish() method before invoking the next stage.
+        So finish() is for AFTER the process has finished to do any transformations and post-checking. 
+        If everything is OK then "status_ok": True must be set in its return val to indicate that
+        we can proceed to next stage.
+        
+        Status() gives a status report of the current state of the ProcessStage but each of begin(), during() and finish() do also.
+        All of these feed into the persistent state structure.
+        You can return whatever you like from status(), the UI understands these:
+        .....
+        
+        """
+        
         ## Look at most recent stage, if status is not FINISHED then query the extractor
+        stageinfo_dict = dict([(d['stage_class'], d) for d in stageinfo])
         if stageinfo:
             mystage = stageinfo[-1]
             stageidx = self.stage_sequence.index(mystage['stage_class'])
@@ -65,7 +108,8 @@ class ProcessHandler(object):
             if stage_classname:
                 stage_prev_status = mystage['status']
                 stage_class = getattr(self, stage_classname, None)
-                stageobj = stage_class(extractors=self.extractors)
+                # sys.stderr.write(str(type(stage_prev_status))+'\n')
+                stageobj = stage_class(extractors=self.extractors, status_info=mystage, all_stages=stageinfo_dict)
                 
                 mystage.update(stageobj.status())
                 new_status = mystage['status']
@@ -81,9 +125,12 @@ class ProcessHandler(object):
                     mystage.update(duringstage_status)
 
                 elif new_status == 'PROCESSING':
-                    sys.stderr.write("PROCESSOR is running")
+                    util.log("PROCESSOR is running")
                     duringstage_status = stageobj.during(*[], **{})
                     mystage.update(duringstage_status)
+                
+                elif stage_prev_status == 'FINISHED' and new_status == 'FINISHED':
+                    stageidx += 1
                 
                 else:
                     pass
@@ -118,7 +165,7 @@ class ProcessHandler(object):
             if len(self.stage_sequence) > stageidx and not too_many_stages():
                 newstage_class = getattr(self, self.stage_sequence[stageidx])
                 prevstage = len(stageinfo) and stageinfo[-1] or None
-                newstage_obj = newstage_class(extractors=self.extractors)
+                newstage_obj = newstage_class(extractors=self.extractors, all_stages=stageinfo_dict)
                 stageinfo.append(newstage_obj.begin(previous_stage=prevstage, *[], **{}))
             else:
                 pass
@@ -132,14 +179,21 @@ class ProcessStage(object):
     Represents a stage of a process
     """
     extractor_tag = None
+    extractor_ident = None
     extractor = None
     message_begin = ''
     message_during = ''
     message_finish = ''
+    status_info = {}
+    all_stages = {}
     
-    def __init__(self, extractors={}):
+    def __init__(self, extractors={}, status_info={}, all_stages={}):
         if self.extractor_tag:
             self.extractor = extractors.get(self.extractor_tag)
+        elif self.extractor_ident:
+            self.extractor = tractor.ImportioExtractor(self.extractor_ident)
+        self.status_info = status_info
+        self.all_stages = all_stages
     
     def runs_get_latest(self):
         runs = self.extractor.runs_get_raw()
@@ -249,3 +303,45 @@ class ExtractorProcessStage(ProcessStage):
             output_written_to = outfname
         )
             
+
+class CSVGenerateStage(ProcessStage):
+    input_stage_tag = None
+    input_stage_filename_field = 'output_written_to'
+    columns_out = []
+    message_begin = "Processing data"
+    message_during = "Processing data"
+    message_finish = "Data processed"
+    
+    def map_row(self, row_in, rider_in={}):
+        pass
+    
+    def begin(self, previous_stage={}, *args, **kwargs):
+        input_stage = self.all_stages[self.input_stage_tag]
+        in_fname = input_stage[self.input_stage_filename_field]
+        prevdata = csv.DictReader(open(in_fname))
+        
+        timestamp_start = util.timestamp_now()
+        
+        def write_out(fout):
+            dw = csv.DictWriter(fout, self.columns_out)
+            dw.writeheader()
+            for r in prevdata:
+                rider = util.url_get_rider(r['url'])
+                rout = self.map_row(r, rider)
+                try:
+                    dw.writerow(rout)
+                except:
+                    util.log(u"Failed for row: {}".format(rout))
+                    # raise
+    
+        return dict(
+            stage_class = self.__class__.__name__,
+            status_ok = True,
+            status_message = self.message_finish,
+            status = 'FINISHED',
+            output_written_to = util.with_temp_file(write_out), 
+            when_started = timestamp_start,
+            when_stopped = util.timestamp_now()
+        )
+    
+    

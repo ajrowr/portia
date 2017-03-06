@@ -351,6 +351,21 @@ class ImportioExtractor(ImportioArtifact):
                 raise Exception("It didn't work")
         return self._data
     
+    def get_jsons(self):
+        """This is a little unconventional because of Import's use of LDjson.
+        It returns a filelike where each line is a stringified JSON struct.
+        Typical use pattern:
+        for rawline in get_jsons():
+            mydict = json.loads(rawline)
+            ... do stuff with mydict ...
+        """
+        url_tmpl = "https://data.import.io/extractor/{xid}/json/latest?_apikey={apikey}"
+        resp = requests.get(self._url(url_tmpl), headers={'Accept-Encoding': 'gzip'})
+        if resp.status_code == 200:
+            body = StringIO.StringIO(resp.content)
+            return body
+        
+    
     def download_csv_as(self, filename):
         url_tmpl = "https://data.import.io/extractor/{xid}/csv/latest?_apikey={apikey}"
         resp = requests.get(self._url(url_tmpl), headers={'Accept-Encoding': 'gzip'})
