@@ -89,7 +89,7 @@ class ImportioArtifact(object):
                 try:
                     self._apikey = kc.get_user_key(self.info['_meta']['ownerGuid'])
                 except:
-                    print "Key not found in keychain. Using generic key with limited access."
+                    sys.stderr.write("Key not found in keychain. Using generic key with limited access.\n")
         
         return self._apikey
     

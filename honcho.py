@@ -197,7 +197,10 @@ class ProcessStage(object):
     
     def runs_get_latest(self):
         runs = self.extractor.runs_get_raw()
-        return runs[0]
+        try:
+            return runs[0]
+        except:
+            return None
     
     def status(self):
         if self.extractor:
