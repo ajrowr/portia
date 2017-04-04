@@ -10,6 +10,7 @@ setup(
     author_email='alan@codex.cx',
     license='MIT',
     packages=['portia'],
+    install_requires=['requests'],
     zip_safe=False
 )
 
