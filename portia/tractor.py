@@ -384,7 +384,8 @@ class ImportioExtractor(ImportioArtifact):
             body = StringIO.StringIO(resp.content)
             body.read(3)
         else:
-            raise("Unexpected status code:".format(resp.status_code))
+            # print self._url(url_tmpl), resp
+            raise Exception("Unexpected status code: {}".format(resp.status_code))
         
         fout.write(body.read())
         

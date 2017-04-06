@@ -109,7 +109,7 @@ class ProcessHandler(object):
                 stage_prev_status = mystage['status']
                 stage_class = getattr(self, stage_classname, None)
                 # sys.stderr.write(str(type(stage_prev_status))+'\n')
-                stageobj = stage_class(extractors=self.extractors, status_info=mystage, all_stages=stageinfo_dict)
+                stageobj = stage_class(extractors=self.extractors, status_info=mystage, all_stages=stageinfo_dict, handler=self)
                 
                 mystage.update(stageobj.status())
                 new_status = mystage['status']
@@ -165,7 +165,7 @@ class ProcessHandler(object):
             if len(self.stage_sequence) > stageidx and not too_many_stages():
                 newstage_class = getattr(self, self.stage_sequence[stageidx])
                 prevstage = len(stageinfo) and stageinfo[-1] or None
-                newstage_obj = newstage_class(extractors=self.extractors, all_stages=stageinfo_dict)
+                newstage_obj = newstage_class(extractors=self.extractors, all_stages=stageinfo_dict, handler=self)
                 stageinfo.append(newstage_obj.begin(previous_stage=prevstage, *[], **{}))
             else:
                 pass
@@ -178,16 +178,24 @@ class ProcessStage(object):
     """
     Represents a stage of a process
     """
+    ## Class variables
     extractor_tag = None
     extractor_ident = None
-    extractor = None
     message_begin = ''
     message_during = ''
     message_finish = ''
+    
+    ## Instance state
     status_info = {}
     all_stages = {}
+    extractors_all = {}
+    extractor = None
+    handler = None
     
-    def __init__(self, extractors={}, status_info={}, all_stages={}):
+    def __init__(self, extractors={}, status_info={}, all_stages={}, handler=None):
+        self.extractors_all = extractors
+        self.handler = handler
+        # sys.stderr.write("Parent process handler is {}".format(self.handler))
         if self.extractor_tag:
             self.extractor = extractors.get(self.extractor_tag)
         elif self.extractor_ident:

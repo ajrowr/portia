@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name='importia',
-    version='0.2',
+    version='0.2.1',
     description='Integration tools for import.io',
     url='http://github.com/ajrowr/portia/',
     author='Alan Rowarth',
