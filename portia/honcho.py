@@ -1,5 +1,5 @@
 
-import sys, tempfile, datetime, time, csv, json
+import sys, tempfile, datetime, time, csv, json, logging
 import tractor
 
 class util(object):
@@ -65,10 +65,13 @@ class ProcessHandler(object):
     ## Leave blank
     extractors = {}
     
-    def __init__(self, extractors):
-        self.extractors = extractors;
+    log = None
     
-    def check_stages(self, stageinfo=[]):
+    def __init__(self, extractors):
+        self.extractors = extractors
+        self.log = logging.getLogger(self.__module__)
+    
+    def check_stages(self, stageinfo=[], proceed=True):
         """
         Extractors is a dict of the extractors relevant to this Handler as prescribed in the config
         stageinfo is a list of the stages as obtained from the status file
@@ -120,16 +123,17 @@ class ProcessHandler(object):
                     mystage.update(poststage_status)
                         
                 elif new_status == 'STARTED':
-                    # sys.stderr.write("EXTRACTOR is running")
+                    self.log.info("EXTRACTOR is running")
                     duringstage_status = stageobj.during(*[], **{})
                     mystage.update(duringstage_status)
 
                 elif new_status == 'PROCESSING':
-                    util.log("PROCESSOR is running")
+                    self.log.info("PROCESSOR is running")
                     duringstage_status = stageobj.during(*[], **{})
                     mystage.update(duringstage_status)
                 
                 elif stage_prev_status == 'FINISHED' and new_status == 'FINISHED':
+                    self.log.info("Stage is finished")
                     stageidx += 1
                 
                 else:
@@ -162,7 +166,7 @@ class ProcessHandler(object):
         
         too_many_stages = lambda: len(stageinfo) >= len(self.stage_sequence)
         if len(stageinfo) == 0 or mystage['status'] == 'FINISHED':
-            if len(self.stage_sequence) > stageidx and not too_many_stages():
+            if len(self.stage_sequence) > stageidx and proceed is True and not too_many_stages():
                 newstage_class = getattr(self, self.stage_sequence[stageidx])
                 prevstage = len(stageinfo) and stageinfo[-1] or None
                 newstage_obj = newstage_class(extractors=self.extractors, all_stages=stageinfo_dict, handler=self)
@@ -296,7 +300,7 @@ class ExtractorProcessStage(ProcessStage):
         )
 
     def during(self, *args, **kwargs):
-        # sys.stderr.write('PROCESS RUNNING\n')
+        self.handler.log.info('PROCESS RUNNING\n')
         return dict(
             status_message = self.message_during
         )
@@ -305,6 +309,7 @@ class ExtractorProcessStage(ProcessStage):
         ## Get URLs from list extractor and inject them into store extractor
         ## (later we will incorporate the location cookie)
         outfname = util.save_csv(self.extractor)
+        self.handler.log.info("Stage data written to {}".format(outfname))
         
         # sys.stderr.write('POST STAGE I EXECUTED\n')
         return dict(
@@ -342,7 +347,7 @@ class CSVGenerateStage(ProcessStage):
                 try:
                     dw.writerow(rout)
                 except:
-                    util.log(u"Failed for row: {}".format(rout))
+                    self.handler.log.warning(u"Failed for row: {}".format(rout))
                     # raise
     
         return dict(
